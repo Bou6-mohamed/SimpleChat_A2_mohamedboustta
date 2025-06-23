@@ -1,110 +1,165 @@
 package edu.seg2105.edu.server.backend;
-// This file contains material supporting section 3.7 of the textbook:
-// "Object Oriented Software Engineering" and is issued under the open-source
-// license found at www.lloseng.com 
 
+import ocsf.server.AbstractServer;
+import ocsf.server.ConnectionToClient;
+import java.io.IOException;
+import edu.seg2105.client.common.ChatIF;  // Required for serverUI
 
-import ocsf.server.*;
-
-/**
- * This class overrides some of the methods in the abstract 
- * superclass in order to give more functionality to the server.
- *
- * @author Dr Timothy C. Lethbridge
- * @author Dr Robert Lagani&egrave;re
- * @author Fran&ccedil;ois B&eacute;langer
- * @author Paul Holden
- */
-public class EchoServer extends AbstractServer 
-{
-  //Class variables *************************************************
-  
-  /**
-   * The default port to listen on.
-   */
+public class EchoServer extends AbstractServer {
+  // Class variables *************************************************
   final public static int DEFAULT_PORT = 5555;
-  
-  //Constructors ****************************************************
-  
+
+  // Instance variables **********************************************
+  private ChatIF serverUI;
+
+  // Constructors ****************************************************
   /**
-   * Constructs an instance of the echo server.
-   *
-   * @param port The port number to connect on.
+   * Default constructor with no UI (used in Phase 0)
    */
-  public EchoServer(int port) 
-  {
+  public EchoServer(int port) {
     super(port);
   }
 
-  
-  //Instance methods ************************************************
-  
   /**
-   * This method handles any messages received from the client.
-   *
-   * @param msg The message received from the client.
-   * @param client The connection from which the message originated.
+   * Constructor that accepts a server UI (used in Exercise 2)
    */
-  public void handleMessageFromClient
-    (Object msg, ConnectionToClient client)
-  {
-    System.out.println("Message received: " + msg + " from " + client);
-    this.sendToAllClients(msg);
+  public EchoServer(int port, ChatIF serverUI) {
+    super(port);
+    this.serverUI = serverUI;
   }
-    
-  /**
-   * This method overrides the one in the superclass.  Called
-   * when the server starts listening for connections.
-   */
-  protected void serverStarted()
-  {
-    System.out.println
-      ("Server listening for connections on port " + getPort());
-  }
-  
-  /**
-   * This method overrides the one in the superclass.  Called
-   * when the server stops listening for connections.
-   */
-  protected void serverStopped()
-  {
-    System.out.println
-      ("Server has stopped listening for connections.");
-  }
-  
-  
-  //Class methods ***************************************************
-  
-  /**
-   * This method is responsible for the creation of 
-   * the server instance (there is no UI in this phase).
-   *
-   * @param args[0] The port number to listen on.  Defaults to 5555 
-   *          if no argument is entered.
-   */
-  public static void main(String[] args) 
-  {
-    int port = 0; //Port to listen on
 
-    try
-    {
-      port = Integer.parseInt(args[0]); //Get port from command line
+  // Instance methods ************************************************
+  public void handleMessageFromClient(Object msg, ConnectionToClient client) {
+	  String message = msg.toString();
+
+	  // Handle login command
+	  if (message.startsWith("#login")) {
+	    String[] parts = message.split(" ");
+	    if (parts.length < 2) {
+	      try {
+	        client.sendToClient("ERROR - No login ID provided.");
+	        client.close();
+	      } catch (IOException e) {}
+	      return;
+	    }
+
+	    if (client.getInfo("loginID") != null) {
+	      try {
+	        client.sendToClient("ERROR - Already logged in.");
+	        client.close();
+	      } catch (IOException e) {}
+	      return;
+	    }
+
+	    String loginID = parts[1];
+	    client.setInfo("loginID", loginID);
+	    System.out.println(loginID + " has logged on.");
+	    return;
+	  }
+
+	  // Block non-logged in clients from sending messages
+	  Object idObj = client.getInfo("loginID");
+	  if (idObj == null) {
+	    try {
+	      client.sendToClient("ERROR - You must log in first.");
+	      client.close();
+	    } catch (IOException e) {}
+	    return;
+	  }
+
+	  // Otherwise, broadcast with loginID prefix
+	  String loginID = idObj.toString();
+	  System.out.println("Message received: " + message + " from " + loginID);
+	  sendToAllClients(loginID + " > " + message);
+	}
+
+  /**
+   * Handles messages typed into the server console (via ServerConsole)
+   */
+  public void handleMessageFromServerUI(String message) {
+    if (message.startsWith("#")) {
+      if (message.equals("#quit")) {
+        try {
+          close();
+        } catch (Exception e) {
+          // Ignore
+        }
+        System.exit(0);
+      } else if (message.equals("#stop")) {
+        stopListening();
+      } else if (message.equals("#close")) {
+        try {
+          close();
+        } catch (Exception e) {
+          serverUI.display("Error closing the server.");
+        }
+      } else if (message.startsWith("#setport")) {
+        if (!isListening()) {
+          try {
+            int newPort = Integer.parseInt(message.split(" ")[1]);
+            setPort(newPort);
+            serverUI.display("Port set to " + newPort);
+          } catch (Exception e) {
+            serverUI.display("Usage: #setport <port>");
+          }
+        } else {
+          serverUI.display("Cannot change port while server is listening.");
+        }
+      } else if (message.equals("#start")) {
+        try {
+          listen();
+        } catch (Exception e) {
+          serverUI.display("Could not start server.");
+        }
+      } else if (message.equals("#getport")) {
+        serverUI.display("Current port: " + getPort());
+      } else {
+        serverUI.display("Unknown command.");
+      }
+    } else {
+      String formatted = "SERVER MSG> " + message;
+      System.out.println(formatted);
+      sendToAllClients(formatted);
     }
-    catch(Throwable t)
-    {
-      port = DEFAULT_PORT; //Set port to 5555
+  }
+
+  @Override
+  protected void clientConnected(ConnectionToClient client) {
+    System.out.println("A new client has connected: " + client);
+  }
+
+  @Override
+  synchronized protected void clientDisconnected(ConnectionToClient client) {
+    System.out.println("A client has disconnected: " + client);
+  }
+
+  @Override
+  protected void serverStarted() {
+    System.out.println("Server listening for connections on port " + getPort());
+  }
+
+  @Override
+  protected void serverStopped() {
+    System.out.println("Server has stopped listening for connections.");
+  }
+
+  // Main method for phase 0 or testing without ServerConsole
+  public static void main(String[] args) {
+    int port = 0;
+
+    try {
+      port = Integer.parseInt(args[0]);
+    } catch (Throwable t) {
+      port = DEFAULT_PORT;
     }
-	
+
     EchoServer sv = new EchoServer(port);
-    
-    try 
-    {
-      sv.listen(); //Start listening for connections
-    } 
-    catch (Exception ex) 
-    {
+
+    try {
+      sv.listen();
+    } catch (Exception ex) {
       System.out.println("ERROR - Could not listen for clients!");
     }
   }
 }
-//End of EchoServer class
+// End of EchoServer class
